@@ -1,0 +1,46 @@
+name: Rust Docs
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build docs
+        run: cargo doc --no-deps
+
+      - name: Create index redirect
+        run: |
+          crate_name=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].name' | tr '-' '_')
+          echo "<meta http-equiv=\"refresh\" content=\"0; url=$crate_name/\">" > target/doc/index.html
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: target/doc
+
+  deploy:
+    needs: docs
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
