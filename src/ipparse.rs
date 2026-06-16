@@ -2,60 +2,21 @@ use ipnet::Ipv4Net;
 use std::net::Ipv4Addr;
 use std::str::FromStr;
 
-/// Represents potential errors encountered when parsing IP address specifications.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParseError {
-    /// Indicates that the specified range format (e.g., `start-end`) is invalid
-    /// or violates logical constraints (like start > end).
     InvalidRange,
-
-    /// Indicates that the wildcard format (`base mask`) contains invalid components
-    /// or too many parts.
-    InvalidWildcard,
-
-    /// Used when the input string does not match any recognized IP representation
-    /// (IP address, CIDR, Range, or Wildcard).
+    InvalidNetmask,
     InvalidFormat,
 }
 
-/// Represents a parsed and standardized network address specification.
-///
-/// The input string can represent several distinct types of addresses:
-/// a single IP, a CIDR block, a numerical range, or a wildcard broadcast scope.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParsedAddress {
-    /// A single IPv4 address (e.g., "192.168.1.1").
     Ip(Ipv4Addr),
-
-    /// An IPv4 CIDR network block (e.g., "192.168.1.0/24").
     Cidr(Ipv4Net),
-
-    /// A simple inclusive range defined by two IP addresses
-    /// (e.g., "192.168.1.10-192.168.1.20").
     Range(Ipv4Addr, Ipv4Addr),
-
-    /// Represents a wildcard address specification in `base mask` format
-    /// (e.g., "10.0.0.0 0.0.0.255").
-    Wildcard(Ipv4Addr, Ipv4Addr),
+    Netmask(Ipv4Addr, Ipv4Addr),
 }
 
-/// Attempts to parse an input string into a canonical `ParsedAddress` representation.
-///
-/// The parsing follows a specific hierarchy of checks:
-/// 1. IPv4 Address (single IP)
-/// 2. CIDR Block (`/N`)
-/// 3. Range (`start-end`)
-/// 4. Wildcard (`base mask`)
-///
-/// Returns `Ok(ParsedAddress)` if parsing is successful, otherwise returns a detailed
-/// `ParseError` describing the failure mode.
-///
-/// # Parameters
-/// * `s`: The input string slice to be parsed.
-///
-/// # Errors
-/// Returns `ParseError::InvalidFormat`, `ParseError::InvalidRange`, or `ParseError::InvalidWildcard`
-/// if the format is incorrect, fails type conversion, or violates logical constraints.
 pub fn parse(s: &str) -> Result<ParsedAddress, ParseError> {
     // Remove leading/trailing whitespace
     let s = s.trim();
@@ -75,16 +36,15 @@ pub fn parse(s: &str) -> Result<ParsedAddress, ParseError> {
         return Ok(ParsedAddress::Range(start, end));
     }
 
-    // Attempt Wildcard check
-    if let Some((base, wildcard)) = parse_wildcard(s)? {
-        return Ok(ParsedAddress::Wildcard(base, wildcard));
+    if s.contains(' ') {
+        let (base, mask) = parse_netmask(s)?;
+        return Ok(ParsedAddress::Netmask(base, mask));
     }
 
     // Does not match any format
     Err(ParseError::InvalidFormat)
 }
 
-/// Private helper function to parse a range string `start-end`.
 fn parse_range(s: &str) -> Result<Option<(Ipv4Addr, Ipv4Addr)>, ParseError> {
     // Must contain '-' to be considered a range
     let Some((start, end)) = s.split_once('-') else {
@@ -111,37 +71,46 @@ fn parse_range(s: &str) -> Result<Option<(Ipv4Addr, Ipv4Addr)>, ParseError> {
     Ok(Some((start, end)))
 }
 
-/// Private helper function to parse a wildcard string `base mask`.
-fn parse_wildcard(s: &str) -> Result<Option<(Ipv4Addr, Ipv4Addr)>, ParseError> {
-    // Split by whitespace
+fn parse_netmask(s: &str) -> Result<(Ipv4Addr, Ipv4Addr), ParseError> {
     let mut parts = s.split_whitespace();
 
-    // Base address
-    let Some(base) = parts.next() else {
-        return Ok(None);
-    };
+    let base = parts.next().ok_or(ParseError::InvalidNetmask)?;
 
-    // Wildcard mask
-    let Some(mask) = parts.next() else {
-        return Ok(None);
-    };
+    let mask = parts.next().ok_or(ParseError::InvalidNetmask)?;
 
-    // Too many components/parts
     if parts.next().is_some() {
-        return Err(ParseError::InvalidWildcard);
+        return Err(ParseError::InvalidNetmask);
     }
 
-    // Convert base address
-    let base = base
-        .parse::<Ipv4Addr>()
-        .map_err(|_| ParseError::InvalidWildcard)?;
+    let base = base.parse().map_err(|_| ParseError::InvalidNetmask)?;
 
-    // Convert wildcard mask
-    let wildcard = mask
-        .parse::<Ipv4Addr>()
-        .map_err(|_| ParseError::InvalidWildcard)?;
+    let mask = mask.parse().map_err(|_| ParseError::InvalidNetmask)?;
 
-    Ok(Some((base, wildcard)))
+    if !is_valid_subnet_mask(mask) {
+        return Err(ParseError::InvalidNetmask);
+    }
+
+    Ok((base, mask))
+}
+
+fn is_valid_subnet_mask(mask: Ipv4Addr) -> bool {
+    let m = u32::from(mask);
+
+    let mut seen_zero = false;
+
+    for bit in (0..32).rev() {
+        let set = (m & (1 << bit)) != 0;
+
+        if seen_zero && set {
+            return false;
+        }
+
+        if !set {
+            seen_zero = true;
+        }
+    }
+
+    true
 }
 
 #[cfg(test)]
@@ -152,7 +121,6 @@ mod tests {
     #[test]
     fn test_parse_ip() {
         let result = parse("192.168.1.1").unwrap();
-
         assert!(matches!(result, ParsedAddress::Ip(_)));
     }
 
@@ -160,7 +128,6 @@ mod tests {
     #[test]
     fn test_parse_cidr() {
         let result = parse("192.168.1.0/24").unwrap();
-
         assert!(matches!(result, ParsedAddress::Cidr(_)));
     }
 
@@ -168,16 +135,7 @@ mod tests {
     #[test]
     fn test_parse_range() {
         let result = parse("192.168.1.10-192.168.1.20").unwrap();
-
         assert!(matches!(result, ParsedAddress::Range(_, _)));
-    }
-
-    // Wildcard Check
-    #[test]
-    fn test_parse_wildcard() {
-        let result = parse("10.0.0.0 0.0.0.255").unwrap();
-
-        assert!(matches!(result, ParsedAddress::Wildcard(_, _)));
     }
 
     // Invalid Input
@@ -210,16 +168,10 @@ mod tests {
         assert!(parse("192.168.1.10-bbb").is_err());
     }
 
-    // Invalid Wildcard
-    #[test]
-    fn test_parse_invalid_wildcard() {
-        assert!(parse("10.0.0.0 xxx").is_err());
-    }
-
     // Too many parts/components
     #[test]
     fn test_parse_too_many_parts() {
-        assert!(parse("10.0.0.0 0.0.0.255 extra").is_err());
+        assert!(parse("10.0.0.0/8 extra").is_err());
     }
 
     // Verify IP value
@@ -246,5 +198,21 @@ mod tests {
             }
             _ => panic!(),
         }
+    }
+
+    #[test]
+    fn test_valid_subnet_masks() {
+        assert!(is_valid_subnet_mask("255.0.0.0".parse().unwrap()));
+        assert!(is_valid_subnet_mask("255.255.0.0".parse().unwrap()));
+        assert!(is_valid_subnet_mask("255.255.255.0".parse().unwrap()));
+        assert!(is_valid_subnet_mask("255.255.255.255".parse().unwrap()));
+        assert!(is_valid_subnet_mask("0.0.0.0".parse().unwrap()));
+    }
+
+    #[test]
+    fn test_invalid_subnet_masks() {
+        assert!(!is_valid_subnet_mask("255.0.255.0".parse().unwrap()));
+        assert!(!is_valid_subnet_mask("255.255.0.255".parse().unwrap()));
+        assert!(!is_valid_subnet_mask("255.0.255.255".parse().unwrap()));
     }
 }

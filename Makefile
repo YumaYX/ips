@@ -1,6 +1,11 @@
 default: all
 
-.PHONY: fmt build test commit fix doc all
+.PHONY: fmt build test commit fix doc all example
+
+example:
+	for f in examples/*.rs; do \
+		cargo run --example $$(basename $$f .rs); \
+	done
 
 fmt:
 	cargo fmt
@@ -21,4 +26,4 @@ fix:
 doc:
 	cargo doc
 
-all: fmt build test commit fix test doc
+all: fmt build test example commit fix test doc
