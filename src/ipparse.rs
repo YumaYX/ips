@@ -1,22 +1,57 @@
+//! This module provides parsing utilities to convert various IP address string representations
+//! into a structured [`ParsedAddress`] type.
+//!
+//! It supports:
+//! - Single IPv4 addresses
+//! - CIDR notation (e.g., `192.168.1.0/24`)
+//! - IP ranges (e.g., `192.168.1.10-192.168.1.20`)
+//! - Netmask notation (e.g., `192.168.1.0 255.255.255.0`)
+
 use ipnet::Ipv4Net;
 use std::net::Ipv4Addr;
 use std::str::FromStr;
 
+/// Errors that can occur during the parsing of an IP address string.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParseError {
+    /// The provided range is invalid (e.g., start IP is greater than end IP, or invalid IP format).
     InvalidRange,
+    /// The provided netmask is invalid or the format is incorrect.
     InvalidNetmask,
+    /// The input string does not match any supported IP address format.
     InvalidFormat,
 }
 
+/// Represents a parsed IP address or network block.
+///
+/// This enum captures the different ways an IP-related string can be interpreted,
+/// allowing the library to handle them uniformly.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParsedAddress {
+    /// A single IPv4 address.
     Ip(Ipv4Addr),
+    /// An IPv4 network in CIDR notation.
     Cidr(Ipv4Net),
+    /// A range of IPv4 addresses, defined by a start and end address.
     Range(Ipv4Addr, Ipv4Addr),
+    /// A network defined by a base address and a subnet mask.
     Netmask(Ipv4Addr, Ipv4Addr),
 }
 
+/// Parses a string into a [`ParsedAddress`].
+///
+/// This function attempts to match the input string against several supported formats:
+/// 1. Single IPv4 address
+/// 2. CIDR notation
+/// 3. IP range (`start-end`)
+/// 4. Netmask notation (`address mask`)
+///
+/// # Errors
+///
+/// Returns [`ParseError::InvalidFormat`] if the input doesn't match any known format.
+/// Returns [`ParseError::InvalidRange`] if a range is detected but is malformed.
+/// Returns [`ParseError::InvalidNetmask`] if a netmask is detected but is malformed.
+///
 pub fn parse(s: &str) -> Result<ParsedAddress, ParseError> {
     // Remove leading/trailing whitespace
     let s = s.trim();

@@ -1,6 +1,23 @@
+//! This module provides utility functions for working with CIDR blocks and IP ranges.
+//!
+//! It includes logic for detecting overlap between two CIDR networks and
+//! converting a contiguous range of IP addresses into the minimal set of CIDR blocks.
+
 use ipnet::Ipv4Net;
 use std::net::Ipv4Addr;
 
+/// Checks if one CIDR network is a subset of another.
+///
+/// This function returns `true` if network `b` is entirely contained within network `a`.
+///
+/// # Examples
+///
+/// ```
+/// // This is internal (pub(crate)), but for documentation purposes:
+/// // let a: Ipv4Net = "10.0.0.0/24".parse().unwrap();
+/// // let b: Ipv4Net = "10.0.0.128/25".parse().unwrap();
+/// // assert!(cidr_overlap(&a, &b));
+/// ```
 pub(crate) fn cidr_overlap(a: &Ipv4Net, b: &Ipv4Net) -> bool {
     let a_start = u32::from(a.network());
     let a_end = u32::from(a.broadcast());
@@ -11,6 +28,20 @@ pub(crate) fn cidr_overlap(a: &Ipv4Net, b: &Ipv4Net) -> bool {
     a_start <= b_start && b_end <= a_end
 }
 
+/// Converts a contiguous range of IPv4 addresses into a list of CIDR blocks.
+///
+/// This function uses a greedy algorithm to find the largest possible CIDR blocks
+/// that fit within the specified range, ensuring the resulting list is minimal.
+///
+/// If the `start` address is greater than the `end` address, an empty vector is returned.
+///
+/// # Examples
+///
+/// ```
+/// // let cidrs = range_to_cidrs("192.168.1.0".parse().unwrap(), "192.168.1.255".parse().unwrap());
+/// // assert_eq!(cidrs.len(), 1);
+/// // assert_eq!(cidrs[0].to_string(), "192.168.1.0/24");
+/// ```
 pub(crate) fn range_to_cidrs(start: Ipv4Addr, end: Ipv4Addr) -> Vec<Ipv4Net> {
     let mut result = Vec::new();
 

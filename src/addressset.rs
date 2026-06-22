@@ -1,3 +1,10 @@
+//! This module provides the [`AddressSet`] type, which represents a set of IPv4 addresses.
+//!
+//! An `AddressSet` can be constructed from various formats (IP, CIDR, range, netmask)
+//! and provides efficient methods for checking inclusion and merging sets.
+//! It automatically normalizes the underlying representation to use the minimal
+//! number of CIDR blocks.
+
 use crate::cidr::{cidr_overlap, range_to_cidrs};
 use crate::ipparse::parse;
 pub use crate::ipparse::{ParseError, ParsedAddress};
@@ -5,38 +12,69 @@ pub use crate::ipparse::{ParseError, ParsedAddress};
 use ipnet::Ipv4Net;
 use std::net::Ipv4Addr;
 
+/// A set of IPv4 addresses, represented internally as a minimal collection of CIDR blocks.
+///
+/// `AddressSet` allows you to handle networks of any shape, from a single IP
+/// to multiple disjoint ranges and CIDRs.
 #[derive(Debug, Clone)]
 pub struct AddressSet {
     cidrs: Vec<Ipv4Net>,
 }
 
 impl AddressSet {
+    /// Parses a string into an [`AddressSet`].
+    ///
+    /// The string can be a single IP, a CIDR block, a range, or a netmask.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParseError`] if the string format is invalid.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ips::addressset::AddressSet;
+    ///
+    /// let set = AddressSet::parse("192.168.1.0/24").unwrap();
+    /// assert!(set.contains_ip("192.168.1.1".parse().unwrap()));
+    /// ```
     pub fn parse(s: &str) -> Result<Self, ParseError> {
         parse(s)?.try_into()
     }
 
+    /// Creates an empty [`AddressSet`].
     pub fn empty() -> Self {
         Self { cidrs: vec![] }
     }
 
+    /// Creates an [`AddressSet`] containing a single IPv4 address.
     pub fn from_ip(ip: Ipv4Addr) -> Self {
         Self {
             cidrs: vec![Ipv4Net::new(ip, 32).unwrap()],
         }
     }
 
+    /// Creates an [`AddressSet`] from a CIDR network.
     pub fn from_cidr(net: Ipv4Net) -> Self {
         let net = Ipv4Net::new(net.network(), net.prefix_len()).unwrap();
 
         Self { cidrs: vec![net] }
     }
 
+    /// Creates an [`AddressSet`] from a range of IPv4 addresses.
+    ///
+    /// The range is inclusive of both `start` and `end` addresses.
     pub fn from_range(start: Ipv4Addr, end: Ipv4Addr) -> Self {
         Self {
             cidrs: range_to_cidrs(start, end),
         }
     }
 
+    /// Creates an [`AddressSet`] from a base address and a subnet mask.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the provided `mask` is not a valid contiguous subnet mask.
     pub fn from_netmask(base: Ipv4Addr, mask: Ipv4Addr) -> Self {
         let mask_u32 = u32::from(mask);
 
@@ -58,10 +96,12 @@ impl AddressSet {
         )
     }
 
+    /// Returns `true` if the given IP address is contained within the set.
     pub fn contains_ip(&self, ip: Ipv4Addr) -> bool {
         self.cidrs.iter().any(|net| net.contains(&ip))
     }
 
+    /// Returns `true` if the given [`AddressSet`] is a subset of this set.
     pub fn contains(&self, other: &Self) -> bool {
         other.cidrs.iter().all(|b| {
             self.cidrs.iter().any(|a| {
@@ -76,15 +116,20 @@ impl AddressSet {
         })
     }
 
+    /// Merges another [`AddressSet`] into this one and normalizes the result.
     pub fn insert(&mut self, other: AddressSet) {
         self.cidrs.extend(other.cidrs);
         self.normalize();
     }
 
+    /// Returns a slice of the CIDR blocks that represent this set.
     pub fn cidrs(&self) -> &[Ipv4Net] {
         &self.cidrs
     }
 
+    /// Returns the single IP address contained in the set, if it consists of exactly one host.
+    ///
+    /// Returns `None` if the set is empty, contains multiple addresses, or is a network larger than /32.
     pub fn host(&self) -> Option<Ipv4Addr> {
         if self.cidrs.len() != 1 {
             return None;
@@ -99,6 +144,12 @@ impl AddressSet {
         }
     }
 
+    /// Normalizes the internal representation of the set.
+    ///
+    /// This process involves:
+    /// 1. Sorting the CIDR blocks.
+    /// 2. Removing redundant blocks (subsets of others).
+    /// 3. Merging adjacent blocks into larger CIDRs where possible.
     pub fn normalize(&mut self) {
         loop {
             let before = self.cidrs.len();
